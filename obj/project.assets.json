@@ -3121,11 +3121,11 @@
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "c:\\Users\\Master\\Projects\\Yava\\AuthService\\AuthService.csproj",
+      "projectUniqueName": "C:\\Users\\Master\\Projects\\Yava\\AuthService\\AuthService.csproj",
       "projectName": "AuthService",
-      "projectPath": "c:\\Users\\Master\\Projects\\Yava\\AuthService\\AuthService.csproj",
+      "projectPath": "C:\\Users\\Master\\Projects\\Yava\\AuthService\\AuthService.csproj",
       "packagesPath": "C:\\Users\\Master\\.nuget\\packages\\",
-      "outputPath": "c:\\Users\\Master\\Projects\\Yava\\AuthService\\obj\\",
+      "outputPath": "C:\\Users\\Master\\Projects\\Yava\\AuthService\\obj\\",
       "projectStyle": "PackageReference",
       "configFilePaths": [
         "C:\\Users\\Master\\AppData\\Roaming\\NuGet\\NuGet.Config"
@@ -3215,7 +3215,7 @@
       "code": "NU1603",
       "level": "Warning",
       "warningLevel": 1,
-      "message": "AuthService зависит от System.IdentityModel.Tokens.Jwt (>= 6.46.0), но версия System.IdentityModel.Tokens.Jwt 6.46.0 не найдена. Использовалась версия System.IdentityModel.Tokens.Jwt 7.0.0.",
+      "message": "AuthService depends on System.IdentityModel.Tokens.Jwt (>= 6.46.0) but System.IdentityModel.Tokens.Jwt 6.46.0 was not found. System.IdentityModel.Tokens.Jwt 7.0.0 was resolved instead.",
       "libraryId": "System.IdentityModel.Tokens.Jwt",
       "targetGraphs": [
         "net9.0"
@@ -3225,7 +3225,7 @@
       "code": "NU1902",
       "level": "Warning",
       "warningLevel": 1,
-      "message": "У пакета \"System.IdentityModel.Tokens.Jwt\" 7.0.0 есть известная уязвимость https://github.com/advisories/GHSA-59j7-ghrg-fj52 (уровень серьезности: средний)",
+      "message": "Package 'System.IdentityModel.Tokens.Jwt' 7.0.0 has a known moderate severity vulnerability, https://github.com/advisories/GHSA-59j7-ghrg-fj52",
       "libraryId": "System.IdentityModel.Tokens.Jwt",
       "targetGraphs": [
         "net9.0"

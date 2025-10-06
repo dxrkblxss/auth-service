@@ -113,7 +113,7 @@ public class Program
             catch (Exception ex)
             {
                 Console.Error.WriteLine("Unexpected error on signup: " + ex.Message);
-                return Results.StatusCode(500);
+                return Results.Problem("Unexpected error during signup");
             }
 
             return Results.Created($"/users/{user.Id}", new { user.Id, user.Email });

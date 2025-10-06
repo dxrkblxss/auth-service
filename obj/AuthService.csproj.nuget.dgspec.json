@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "c:\\Users\\Master\\Projects\\Yava\\AuthService\\AuthService.csproj": {}
+    "C:\\Users\\Master\\Projects\\Yava\\AuthService\\AuthService.csproj": {}
   },
   "projects": {
-    "c:\\Users\\Master\\Projects\\Yava\\AuthService\\AuthService.csproj": {
+    "C:\\Users\\Master\\Projects\\Yava\\AuthService\\AuthService.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "c:\\Users\\Master\\Projects\\Yava\\AuthService\\AuthService.csproj",
+        "projectUniqueName": "C:\\Users\\Master\\Projects\\Yava\\AuthService\\AuthService.csproj",
         "projectName": "AuthService",
-        "projectPath": "c:\\Users\\Master\\Projects\\Yava\\AuthService\\AuthService.csproj",
+        "projectPath": "C:\\Users\\Master\\Projects\\Yava\\AuthService\\AuthService.csproj",
         "packagesPath": "C:\\Users\\Master\\.nuget\\packages\\",
-        "outputPath": "c:\\Users\\Master\\Projects\\Yava\\AuthService\\obj\\",
+        "outputPath": "C:\\Users\\Master\\Projects\\Yava\\AuthService\\obj\\",
         "projectStyle": "PackageReference",
         "configFilePaths": [
           "C:\\Users\\Master\\AppData\\Roaming\\NuGet\\NuGet.Config"

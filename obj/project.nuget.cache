@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "b950C0JS1bs=",
+  "dgSpecHash": "j2UyuUJDBb8=",
   "success": true,
-  "projectFilePath": "c:\\Users\\Master\\Projects\\Yava\\AuthService\\AuthService.csproj",
+  "projectFilePath": "C:\\Users\\Master\\Projects\\Yava\\AuthService\\AuthService.csproj",
   "expectedPackageFiles": [
     "C:\\Users\\Master\\.nuget\\packages\\humanizer.core\\2.14.1\\humanizer.core.2.14.1.nupkg.sha512",
     "C:\\Users\\Master\\.nuget\\packages\\microsoft.aspnetcore.authentication.jwtbearer\\6.0.22\\microsoft.aspnetcore.authentication.jwtbearer.6.0.22.nupkg.sha512",
@@ -59,10 +59,10 @@
     {
       "code": "NU1603",
       "level": "Warning",
-      "message": "AuthService зависит от System.IdentityModel.Tokens.Jwt (>= 6.46.0), но версия System.IdentityModel.Tokens.Jwt 6.46.0 не найдена. Использовалась версия System.IdentityModel.Tokens.Jwt 7.0.0.",
-      "projectPath": "c:\\Users\\Master\\Projects\\Yava\\AuthService\\AuthService.csproj",
+      "message": "AuthService depends on System.IdentityModel.Tokens.Jwt (>= 6.46.0) but System.IdentityModel.Tokens.Jwt 6.46.0 was not found. System.IdentityModel.Tokens.Jwt 7.0.0 was resolved instead.",
+      "projectPath": "C:\\Users\\Master\\Projects\\Yava\\AuthService\\AuthService.csproj",
       "warningLevel": 1,
-      "filePath": "c:\\Users\\Master\\Projects\\Yava\\AuthService\\AuthService.csproj",
+      "filePath": "C:\\Users\\Master\\Projects\\Yava\\AuthService\\AuthService.csproj",
       "libraryId": "System.IdentityModel.Tokens.Jwt",
       "targetGraphs": [
         "net9.0"
@@ -71,10 +71,10 @@
     {
       "code": "NU1902",
       "level": "Warning",
-      "message": "У пакета \"System.IdentityModel.Tokens.Jwt\" 7.0.0 есть известная уязвимость https://github.com/advisories/GHSA-59j7-ghrg-fj52 (уровень серьезности: средний)",
-      "projectPath": "c:\\Users\\Master\\Projects\\Yava\\AuthService\\AuthService.csproj",
+      "message": "Package 'System.IdentityModel.Tokens.Jwt' 7.0.0 has a known moderate severity vulnerability, https://github.com/advisories/GHSA-59j7-ghrg-fj52",
+      "projectPath": "C:\\Users\\Master\\Projects\\Yava\\AuthService\\AuthService.csproj",
       "warningLevel": 1,
-      "filePath": "c:\\Users\\Master\\Projects\\Yava\\AuthService\\AuthService.csproj",
+      "filePath": "C:\\Users\\Master\\Projects\\Yava\\AuthService\\AuthService.csproj",
       "libraryId": "System.IdentityModel.Tokens.Jwt",
       "targetGraphs": [
         "net9.0"
