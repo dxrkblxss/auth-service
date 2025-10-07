@@ -1,13 +1,20 @@
+// TODO: Добавить хранение Refresh токенов в БД с возможностью отзыва
+// TODO: Изменить алгоритм хеширования на Argon2
+// TODO: Добавить больше комментариев
+// TODO: Добавить подтверждение email с помощью шестизначного кода
+// TODO: Сделать уже наконец грёбаный коммит
+
 using System.Security.Cryptography;
 using System.ComponentModel.DataAnnotations;
 using System.Text;
-using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
+using StackExchange.Redis;
 using AuthService.Data;
 using AuthService.Models;
+using AuthService.Middleware;
 
 namespace AuthService;
 
@@ -17,12 +24,24 @@ public class Program
     {
         var builder = WebApplication.CreateBuilder(args);
 
+        builder.Logging.ClearProviders();
+        builder.Logging.AddConfiguration(builder.Configuration.GetSection("Logging"));
+
+        builder.Logging.AddSimpleConsole(options =>
+        {
+            options.IncludeScopes = true;
+            options.SingleLine = false;
+            options.TimestampFormat = "[HH:mm:ss] ";
+        });
+
+        builder.Logging.AddDebug();
+
         builder.Services.AddCors(options =>
         {
             options.AddPolicy("AllowAll", policy =>
-            policy.AllowAnyOrigin()
-                .AllowAnyHeader()
-                .AllowAnyMethod());
+                policy.AllowAnyOrigin()
+                      .AllowAnyHeader()
+                      .AllowAnyMethod());
         });
 
         var connStr = builder.Configuration.GetConnectionString("DefaultConnection");
@@ -31,6 +50,10 @@ public class Program
 
         builder.Services.AddDbContext<AppDbContext>(options =>
             options.UseNpgsql(connStr));
+
+        var redisConnection = builder.Configuration["Redis:Connection"] ?? "redis:6379";
+        builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
+            ConnectionMultiplexer.Connect(redisConnection));
 
         var jwtCfg = builder.Configuration.GetSection("Jwt");
         var jwtKey = jwtCfg.GetValue<string>("Key") ?? throw new InvalidOperationException("Jwt:Key is not set");
@@ -46,48 +69,59 @@ public class Program
         using (var scope = app.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var migrateLogger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+
             try
             {
                 db.Database.Migrate();
+                migrateLogger.LogInformation("Database migrations applied successfully");
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine("Failed to apply database migrations: " + ex.Message);
+                migrateLogger.LogCritical(ex, "Failed to apply database migrations");
                 Environment.Exit(1);
             }
         }
 
-        app.UseExceptionHandler(errApp =>
-        {
-            errApp.Run(async context =>
-            {
-                context.Response.StatusCode = 500;
-                context.Response.ContentType = "application/json";
-                var feat = context.Features.Get<IExceptionHandlerFeature>();
-                var err = feat?.Error;
-                if (err != null)
-                    Console.Error.WriteLine("Unhandled exception: " + err.Message);
-                await context.Response.WriteAsJsonAsync(new { error = "An unexpected error occurred." });
-            });
-        });
+        app.UseMiddleware<CorrelationIdMiddleware>();
+        app.UseMiddleware<ExceptionHandlingMiddleware>();
+
+        var logger = app.Services.GetRequiredService<ILogger<Program>>();
+        logger.LogInformation("Starting AuthService application");
 
         app.UseCors("AllowAll");
 
-        app.MapGet("/ping", () => "pong");
+        //Health check
+        app.MapGet("/ping", (HttpContext ctx, ILogger<Program> log) =>
+        {
+            log.LogInformation("Ping received");
+            return Results.Ok(new { pong = "pong", correlation_id = ctx.GetCorrelationId() });
+        });
 
         // Signup
-        app.MapPost("/signup", async (AuthRequest request, AppDbContext dbContext) =>
+        app.MapPost("/signup", async (AuthRequest request, AppDbContext dbContext, ILogger<Program> log, HttpContext ctx) =>
         {
+            log.LogInformation("Signup attempt for email {Email}", request.Email);
+
             if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Password))
-                return Results.BadRequest("Email and password are required.");
+            {
+                log.LogWarning("Signup failed: missing email or password");
+                return Results.BadRequest(new { error = "Email and password are required.", correlation_id = ctx.GetCorrelationId() });
+            }
 
             var emailValidator = new EmailAddressAttribute();
             if (!emailValidator.IsValid(request.Email))
-                return Results.BadRequest("Invalid email address.");
+            {
+                log.LogWarning("Signup failed: invalid email {Email}", request.Email);
+                return Results.BadRequest(new { error = "Invalid email address.", correlation_id = ctx.GetCorrelationId() });
+            }
 
             var exists = await dbContext.Users.AnyAsync(u => u.Email == request.Email);
             if (exists)
-                return Results.Conflict("User with this email already exists.");
+            {
+                log.LogWarning("Signup failed: user already exists {Email}", request.Email);
+                return Results.Conflict(new { error = "User with this email already exists.", correlation_id = ctx.GetCorrelationId() });
+            }
 
             var passwordHash = HashPassword(request.Password);
 
@@ -100,76 +134,117 @@ public class Program
             };
 
             dbContext.Users.Add(user);
+
             try
             {
                 await dbContext.SaveChangesAsync();
             }
             catch (DbUpdateException dbEx)
             {
-                // Could be a race condition / constraint violation — return conflict for duplicate-like errors
-                Console.Error.WriteLine("DbUpdateException on signup: " + dbEx.Message);
-                return Results.Conflict("Could not create user.");
+                log.LogWarning(dbEx, "DbUpdateException while creating user {Email}", request.Email);
+                return Results.Conflict(new { error = "Could not create user.", correlation_id = ctx.GetCorrelationId() });
             }
             catch (Exception ex)
             {
-                Console.Error.WriteLine("Unexpected error on signup: " + ex.Message);
-                return Results.Problem("Unexpected error during signup");
+                log.LogError(ex, "Unexpected error while creating user {Email}", request.Email);
+                return Results.Problem(new { error = "Unexpected error during signup", correlation_id = ctx.GetCorrelationId() }.ToString());
             }
 
-            return Results.Created($"/users/{user.Id}", new { user.Id, user.Email });
+            log.LogInformation("User created successfully {UserId} {Email}", user.Id, user.Email);
+            return Results.Created($"/users/{user.Id}", new { user.Id, user.Email, correlation_id = ctx.GetCorrelationId() });
         });
 
         // Login
-        app.MapPost("/login", async (AuthRequest request, AppDbContext dbContext) =>
+        app.MapPost("/login", async (AuthRequest request, AppDbContext dbContext, ILogger<Program> log, HttpContext ctx) =>
         {
+            log.LogInformation("Login attempt for email {Email}", request.Email);
+
             if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Password))
-                return Results.BadRequest("Email and password are required.");
+            {
+                log.LogWarning("Login failed: missing email or password");
+                return Results.BadRequest(new { error = "Email and password are required.", correlation_id = ctx.GetCorrelationId() });
+            }
 
             var user = await dbContext.Users.SingleOrDefaultAsync(u => u.Email == request.Email);
             if (user == null || !VerifyPassword(request.Password, user.PasswordHash))
+            {
+                log.LogWarning("Invalid login attempt for email {Email}", request.Email);
                 return Results.Unauthorized();
+            }
 
             var accessToken = CreateJwtToken(user, signingKey, issuer, audience, TimeSpan.FromMinutes(accessTokenMinutes));
             var refreshToken = CreateJwtToken(user, signingKey, issuer, audience, TimeSpan.FromDays(refreshTokenDays), isRefresh: true);
 
-            return Results.Ok(new { access_token = accessToken, refresh_token = refreshToken });
+            log.LogInformation("User {UserId} logged in successfully", user.Id);
+            return Results.Ok(new { access_token = accessToken, refresh_token = refreshToken, correlation_id = ctx.GetCorrelationId() });
         });
 
         // Refresh
-        app.MapPost("/refresh", async (RefreshRequest request, AppDbContext dbContext) =>
+        app.MapPost("/refresh", async (RefreshRequest request, AppDbContext dbContext, ILogger<Program> log, HttpContext ctx) =>
         {
+            log.LogInformation("Refresh token request received");
+
             if (string.IsNullOrWhiteSpace(request.RefreshToken))
-                return Results.BadRequest("refresh_token required");
+            {
+                log.LogWarning("Refresh failed: missing token");
+                return Results.BadRequest(new { error = "refresh_token required", correlation_id = ctx.GetCorrelationId() });
+            }
 
             var principal = ValidateJwtToken(request.RefreshToken, signingKey, issuer, audience, validateLifetime: true);
             if (principal == null)
+            {
+                log.LogWarning("Refresh failed: invalid token");
                 return Results.Unauthorized();
+            }
 
             var tokenType = principal.FindFirst("typ")?.Value;
             if (tokenType != "refresh")
+            {
+                log.LogWarning("Refresh failed: token type is not refresh (typ={Typ})", tokenType);
                 return Results.Unauthorized();
+            }
 
             var userIdClaim = principal.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             var email = principal.FindFirst(ClaimTypes.Email)?.Value;
             if (string.IsNullOrEmpty(userIdClaim) || string.IsNullOrEmpty(email))
+            {
+                log.LogWarning("Refresh failed: token missing expected claims");
                 return Results.Unauthorized();
+            }
 
             if (!Guid.TryParse(userIdClaim, out var userId))
+            {
+                log.LogWarning("Refresh failed: invalid user id claim {UserIdClaim}", userIdClaim);
                 return Results.Unauthorized();
+            }
 
             var user = await dbContext.Users.FindAsync(userId);
             if (user == null)
+            {
+                log.LogWarning("Refresh failed: user not found {UserId}", userId);
                 return Results.Unauthorized();
+            }
 
             var newAccess = CreateJwtToken(user, signingKey, issuer, audience, TimeSpan.FromMinutes(accessTokenMinutes));
             var newRefresh = CreateJwtToken(user, signingKey, issuer, audience, TimeSpan.FromDays(refreshTokenDays), isRefresh: true);
 
-            return Results.Ok(new { access_token = newAccess, refresh_token = newRefresh });
+            log.LogInformation("Issued new tokens for user {UserId}", user.Id);
+            return Results.Ok(new { access_token = newAccess, refresh_token = newRefresh, correlation_id = ctx.GetCorrelationId() });
         });
 
         app.Urls.Add("http://0.0.0.0:80");
 
-        app.Run();
+        logger.LogInformation("Listening on {Urls}", string.Join(',', app.Urls));
+
+        try
+        {
+            app.Run();
+        }
+        catch (Exception ex)
+        {
+            logger.LogCritical(ex, "Host terminated unexpectedly");
+            throw;
+        }
     }
 
     // --- DTOs ---
