@@ -1,12 +1,10 @@
 // TODO: Добавить хранение Refresh токенов в БД с возможностью отзыва
-// TODO: Изменить алгоритм хеширования на Argon2
-// TODO: Добавить больше комментариев
 // TODO: Добавить подтверждение email с помощью шестизначного кода
-// TODO: Сделать уже наконец грёбаный коммит
 
 using System.Security.Cryptography;
 using System.ComponentModel.DataAnnotations;
 using System.Text;
+using Konscious.Security.Cryptography;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
@@ -251,33 +249,49 @@ public class Program
     public record AuthRequest(string Email, string Password);
     public record RefreshRequest(string RefreshToken);
 
-    // --- Password hashing (PBKDF2) ---
-    private static string HashPassword(string password)
+    // --- Password hashing (Argon2) ---
+    public static string HashPassword(string password)
     {
         byte[] salt = RandomNumberGenerator.GetBytes(16);
-        using var pbkdf2 = new Rfc2898DeriveBytes(password, salt, 100_000, HashAlgorithmName.SHA256);
-        byte[] hash = pbkdf2.GetBytes(32);
-        return $"100000.{Convert.ToHexString(salt)}.{Convert.ToHexString(hash)}";
+
+        using var argon2 = new Argon2id(Encoding.UTF8.GetBytes(password));
+
+        argon2.DegreeOfParallelism = 4;
+        argon2.Iterations = 3;
+        argon2.MemorySize = 65536;
+
+        argon2.Salt = salt;
+
+        byte[] hash = argon2.GetBytes(32);
+
+        string encoded = $"$argon2id$v=19$m=65536,t=3,p=4${Convert.ToBase64String(salt)}${Convert.ToBase64String(hash)}";
+        return encoded;
     }
 
-    private static bool VerifyPassword(string password, string stored)
+    public static bool VerifyPassword(string password, string encodedFromDb)
     {
-        try
-        {
-            var parts = stored.Split('.');
-            if (parts.Length != 3) return false;
-            int iterations = int.Parse(parts[0]);
-            byte[] salt = Convert.FromHexString(parts[1]);
-            byte[] expected = Convert.FromHexString(parts[2]);
+        var parts = encodedFromDb.Split('$', StringSplitOptions.RemoveEmptyEntries);
+        var paramsPart = parts[2];
+        var salt = Convert.FromBase64String(parts[3]);
+        var expectedHash = Convert.FromBase64String(parts[4]);
 
-            using var pbkdf2 = new Rfc2898DeriveBytes(password, salt, iterations, HashAlgorithmName.SHA256);
-            byte[] actual = pbkdf2.GetBytes(expected.Length);
-            return CryptographicOperations.FixedTimeEquals(actual, expected);
-        }
-        catch
+        int memory = 65536, iterations = 3, parallelism = 4;
+        foreach (var kv in paramsPart.Split(',', StringSplitOptions.RemoveEmptyEntries))
         {
-            return false;
+            if (kv.StartsWith("m=")) memory = int.Parse(kv.Substring(2));
+            if (kv.StartsWith("t=")) iterations = int.Parse(kv.Substring(2));
+            if (kv.StartsWith("p=")) parallelism = int.Parse(kv.Substring(2));
         }
+
+        using var argon2 = new Argon2id(Encoding.UTF8.GetBytes(password));
+        argon2.Salt = salt;
+        argon2.MemorySize = memory;
+        argon2.Iterations = iterations;
+        argon2.DegreeOfParallelism = parallelism;
+
+        var actualHash = argon2.GetBytes(expectedHash.Length);
+
+        return CryptographicOperations.FixedTimeEquals(actualHash, expectedHash);
     }
 
     // --- JWT helpers ---
@@ -290,7 +304,7 @@ public class Program
             new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
             new Claim(ClaimTypes.Email, user.Email),
             new Claim(ClaimTypes.Role, user.Role),
-            new Claim("typ", isRefresh ? "refresh" : "access")
+            new Claim("typ", isRefresh ? "refresh" : "access") // "typ" claim distinguishes access and refresh tokens
         };
 
         var now = DateTime.UtcNow;
