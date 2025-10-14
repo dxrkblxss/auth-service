@@ -1,4 +1,7 @@
+using Microsoft.AspNetCore.Mvc;
 using AuthService.Middleware;
+
+namespace AuthService.Extensions;
 
 public static class HttpContextExtensions
 {
@@ -15,5 +18,23 @@ public static class HttpContextExtensions
             return header.ToString();
 
         return ctx.TraceIdentifier ?? string.Empty;
+    }
+
+    public static IResult Problem(this HttpContext ctx, int statusCode, string message, string? title = null)
+    {
+        var correlationId = ctx.GetCorrelationId();
+
+        var problem = new ProblemDetails
+        {
+            Title = title ?? "Internal Server Error",
+            Detail = message,
+            Status = statusCode
+        };
+
+        problem.Extensions["correlation_id"] = correlationId;
+
+        ctx.Response.Headers[HeaderName] = correlationId;
+
+        return Results.Problem(problem);
     }
 }

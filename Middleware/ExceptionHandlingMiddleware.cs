@@ -1,4 +1,4 @@
-using System.Text.Json;
+using Microsoft.AspNetCore.Mvc;
 
 namespace AuthService.Middleware;
 
@@ -23,27 +23,27 @@ public class ExceptionHandlingMiddleware
         catch (Exception ex)
         {
             var correlationId = context.Items.TryGetValue(CorrelationIdMiddleware.ItemsKeyConst, out var v) && v is string s && !string.IsNullOrEmpty(s)
-                ? s
-                : (context.Request.Headers.TryGetValue(HeaderName, out var h) ? h.ToString() : context.TraceIdentifier);
+            ? s
+            : (context.Request.Headers.TryGetValue(HeaderName, out var h) ? h.ToString() : context.TraceIdentifier);
 
             using (_logger.BeginScope(new Dictionary<string, object> { [HeaderName] = correlationId }))
             {
-                _logger.LogError(ex, "Unhandled exception while processing request. CorrelationId={CorrelationId}", correlationId);
+                _logger.LogError(ex, "Unhandled exception. CorrelationId={CorrelationId}", correlationId);
             }
+
+            var problem = new ProblemDetails
+            {
+                Title = "An unexpected error occurred.",
+                Status = 500,
+                Detail = "Internal server error"
+            };
+            problem.Extensions["correlation_id"] = correlationId;
 
             context.Response.StatusCode = 500;
             context.Response.ContentType = "application/json";
             context.Response.Headers[HeaderName] = correlationId;
 
-            var payload = new
-            {
-                error = "internal_server_error",
-                message = "An unexpected error occurred.",
-                correlation_id = correlationId
-            };
-
-            var json = JsonSerializer.Serialize(payload);
-            await context.Response.WriteAsync(json);
+            await context.Response.WriteAsJsonAsync(problem);
         }
     }
 }
