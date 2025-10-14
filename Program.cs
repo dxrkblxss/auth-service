@@ -1,6 +1,4 @@
-// TODO: Реализовать ревокацию всей семьи токенов при обнаружении повторного использования
 // TODO: Добавить подтверждение email с помощью шестизначного кода
-// TODO: Логировать correlation_id
 
 using System.Security.Cryptography;
 using System.ComponentModel.DataAnnotations;
