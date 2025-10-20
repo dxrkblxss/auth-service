@@ -6,7 +6,7 @@ namespace AuthService.Repositories;
 
 public interface IRefreshTokenRepository
 {
-    Task<RefreshToken?> GetValidByTokenHashAsync(string tokenHash);
+    Task<RefreshToken?> GetValidByTokenHashAsync(string tokenHash, bool forUpdate = false);
 
     Task AddAsync(RefreshToken refreshToken);
 
@@ -22,11 +22,18 @@ public class RefreshTokenRepository : IRefreshTokenRepository
         _dbContext = dbContext;
     }
 
-    public async Task<RefreshToken?> GetValidByTokenHashAsync(string tokenHash)
+    public async Task<RefreshToken?> GetValidByTokenHashAsync(string tokenHash, bool lockForUpdate = false)
     {
-        return await _dbContext.RefreshTokens
-                .Where(rt => rt.TokenHash == tokenHash && rt.ExpiresAt >= DateTime.UtcNow)
+        if (lockForUpdate)
+        {
+            return await _dbContext.RefreshTokens
+                .FromSqlRaw("SELECT * FROM \"RefreshTokens\" WHERE \"TokenHash\" = {0} AND \"ExpiresAt\" >= NOW() FOR UPDATE", tokenHash)
                 .FirstOrDefaultAsync();
+        }
+
+        return await _dbContext.RefreshTokens
+            .Where(rt => rt.TokenHash == tokenHash && rt.ExpiresAt >= DateTime.UtcNow)
+            .FirstOrDefaultAsync();
     }
 
     public async Task AddAsync(RefreshToken refreshToken)

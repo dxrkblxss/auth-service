@@ -1,5 +1,4 @@
 // TODO: Добавить подтверждение email с помощью шестизначного кода
-// TODO: Мне в падлу коммит делать щас, придёшь домой с колледжа - сделаешь
 
 using Microsoft.EntityFrameworkCore;
 using StackExchange.Redis;

@@ -67,7 +67,6 @@ public class TokenService : ITokenService
         return Convert.ToBase64String(hash);
     }
 
-    // TODO: Тут может быть гонка
     public async Task<(string accessToken, string refreshToken)> RefreshTokenAsync(string refreshToken, string correlationId)
     {
         _logger.LogInformation("Refresh token request received, CorrelationId: {CorrelationId}", correlationId);
@@ -80,15 +79,15 @@ public class TokenService : ITokenService
 
         var tokenHash = HashRefreshToken(refreshToken);
 
-        var refreshTokenEntity = await _refreshTokens.GetValidByTokenHashAsync(tokenHash);
+        using var tx = await _dbContext.Database.BeginTransactionAsync();
+
+        var refreshTokenEntity = await _refreshTokens.GetValidByTokenHashAsync(tokenHash, forUpdate: true);
 
         if (refreshTokenEntity == null)
         {
             _logger.LogWarning("Refresh failed: invalid or expired token, CorrelationId: {CorrelationId}", correlationId);
             throw new InvalidRefreshTokenException();
         }
-
-        using var tx = await _dbContext.Database.BeginTransactionAsync();
 
         if (refreshTokenEntity.RevokedAt.HasValue)
         {
