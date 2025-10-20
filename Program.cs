@@ -54,6 +54,9 @@ public class Program
         builder.Services.Configure<JwtOptions>(
             builder.Configuration.GetSection("Jwt"));
 
+        builder.Services.Configure<HashingOptions>(
+            builder.Configuration.GetSection("Hashing"));
+
         // --- Repositories ---
         builder.Services.AddScoped<IUserRepository, UserRepository>();
         builder.Services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();

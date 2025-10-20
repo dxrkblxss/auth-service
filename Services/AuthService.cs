@@ -24,16 +24,18 @@ public class AuthService : IAuthService
     private readonly IRefreshTokenRepository _refreshTokens;
     private readonly ITokenService _tokens;
     private readonly RefreshTokenOptions _refreshOptions;
+    private readonly HashingOptions _hashingOptions;
 
     private readonly AppDbContext _dbContext;
     private readonly ILogger<AuthService> _logger;
 
-    public AuthService(IUserRepository users, IRefreshTokenRepository refreshTokens, ITokenService tokens, IOptions<RefreshTokenOptions> refreshOptions, AppDbContext dbContext, ILogger<AuthService> logger)
+    public AuthService(IUserRepository users, IRefreshTokenRepository refreshTokens, ITokenService tokens, IOptions<RefreshTokenOptions> refreshOptions, IOptions<HashingOptions> hashingOptions, AppDbContext dbContext, ILogger<AuthService> logger)
     {
         _users = users;
         _refreshTokens = refreshTokens;
         _tokens = tokens;
         _refreshOptions = refreshOptions.Value;
+        _hashingOptions = hashingOptions.Value;
         _dbContext = dbContext;
         _logger = logger;
     }
@@ -128,12 +130,11 @@ public class AuthService : IAuthService
         return (accessToken, refreshToken);
     }
 
-    // TODO: Можно подумать о параметризации MemorySize, Iterations, DegreeOfParallelism через конфиг, чтобы можно было менять без перекомпиляции
-    private static string HashPassword(string password)
+    private string HashPassword(string password)
     {
         byte[] salt = RandomNumberGenerator.GetBytes(16);
         using var argon2 = new Argon2id(Encoding.UTF8.GetBytes(password));
-        argon2.DegreeOfParallelism = 4;
+        argon2.DegreeOfParallelism = _hashingOptions.DegreeOfParallelism;
         argon2.Iterations = 3;
         argon2.MemorySize = 65536;
         argon2.Salt = salt;
