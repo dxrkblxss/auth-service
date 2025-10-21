@@ -45,7 +45,24 @@ public class Program
 
         // --- Redis ---
         var redisConnection = builder.Configuration["Redis:Connection"] ?? "redis:6379";
-        builder.Services.AddSingleton<IConnectionMultiplexer>(sp => ConnectionMultiplexer.Connect(redisConnection));
+        builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
+        {
+            var logger = sp.GetRequiredService<ILogger<Program>>();
+            for (int i = 0; i < 3; i++)
+            {
+                try
+                {
+                    return ConnectionMultiplexer.Connect(redisConnection);
+                }
+                catch (RedisConnectionException ex)
+                {
+                    logger.LogWarning(ex, "Retry {Attempt}/3: Failed to connect to Redis", i + 1);
+                    Thread.Sleep(2000);
+                }
+            }
+            logger.LogCritical("Could not connect to Redis after 3 attempts");
+            throw new RedisConnectionException(ConnectionFailureType.UnableToConnect, "Failed to connect after retries");
+        });
 
         // --- Options ---
         builder.Services.Configure<RefreshTokenOptions>(
@@ -67,6 +84,10 @@ public class Program
 
         var app = builder.Build();
 
+        // --- Log environment ---
+        var logger = app.Services.GetRequiredService<ILogger<Program>>();
+        logger.LogInformation("Running in {Environment} environment", builder.Environment.EnvironmentName);
+
         // --- DB Migration ---
         using (var scope = app.Services.CreateScope())
         {
@@ -80,14 +101,13 @@ public class Program
             catch (Exception ex)
             {
                 migrateLogger.LogCritical(ex, "Failed to apply database migrations");
-                Environment.Exit(1);
+                app.Lifetime.StopApplication();
             }
         }
 
         app.UseMiddleware<CorrelationIdMiddleware>();
         app.UseMiddleware<ExceptionHandlingMiddleware>();
 
-        var logger = app.Services.GetRequiredService<ILogger<Program>>();
         logger.LogInformation("Starting AuthService application");
 
         app.UseCors("AllowAll");
@@ -100,30 +120,53 @@ public class Program
         });
 
         // --- Signup ---
-        app.MapPost("/signup", async (AuthRequest request, IAuthService authService, HttpContext ctx) =>
+        app.MapPost("/signup", async (AuthRequest request, IAuthService authService, ILogger<Program> log, HttpContext ctx) =>
         {
             var correlationId = ctx.GetCorrelationId();
-
-            var user = await authService.SignUpAsync(request.Email, request.Password, correlationId);
-            return Results.Created($"/users/{user.Id}", new { user.Id, user.Email, correlation_id = correlationId });
+            try
+            {
+                var user = await authService.SignUpAsync(request.Email, request.Password, correlationId);
+                return Results.Created($"/users/{user.Id}", new { user.Id, user.Email, correlation_id = correlationId });
+            }
+            catch (Exception ex)
+            {
+                log.LogError(ex, "Signup failed for {Email}, CorrelationId: {CorrelationId}", request.Email, correlationId);
+                throw;
+            }
         });
 
         // --- Login ---
-        app.MapPost("/login", async (AuthRequest request, IAuthService authService, HttpContext ctx) =>
+        app.MapPost("/login", async (AuthRequest request, IAuthService authService, ILogger<Program> log, HttpContext ctx) =>
         {
             var correlationId = ctx.GetCorrelationId();
 
-            var (accessToken, refreshToken) = await authService.LoginAsync(request.Email, request.Password, correlationId);
-            return Results.Ok(new { access_token = accessToken, refresh_token = refreshToken, correlation_id = correlationId });
+            try
+            {
+                var (accessToken, refreshToken) = await authService.LoginAsync(request.Email, request.Password, correlationId);
+                return Results.Ok(new { access_token = accessToken, refresh_token = refreshToken, correlation_id = correlationId });
+            }
+            catch (Exception ex)
+            {
+                log.LogError(ex, "Login failed for {Email}, CorrelationId: {CorrelationId}", request.Email, correlationId);
+                throw;
+            }
         });
 
         // --- Refresh ---
-        app.MapPost("/refresh", async (RefreshRequest request, ITokenService tokenService, HttpContext ctx) =>
+        app.MapPost("/refresh", async (RefreshRequest request, ITokenService tokenService, ILogger<Program> log, HttpContext ctx) =>
         {
             var correlationId = ctx.GetCorrelationId();
 
-            var (accessToken, refreshToken) = await tokenService.RefreshTokenAsync(request.RefreshToken, correlationId);
-            return Results.Ok(new { access_token = accessToken, refresh_token = refreshToken, correlation_id = correlationId });
+            try
+            {
+                var (accessToken, refreshToken) = await tokenService.RefreshTokenAsync(request.RefreshToken, correlationId);
+                return Results.Ok(new { access_token = accessToken, refresh_token = refreshToken, correlation_id = correlationId });
+            }
+            catch (Exception ex)
+            {
+                log.LogError(ex, "Token refresh failed, CorrelationId: {CorrelationId}", correlationId);
+                throw;
+            }
         });
 
         // --- Run app ---
@@ -137,7 +180,7 @@ public class Program
         catch (Exception ex)
         {
             logger.LogCritical(ex, "Host terminated unexpectedly");
-            throw;
+            Environment.Exit(1);
         }
     }
 }

@@ -62,10 +62,22 @@ public class AuthService : IAuthService
             throw new UserAlreadyExistsException();
         }
 
+        string passwordHash;
+
+        try
+        {
+            passwordHash = HashPassword(password);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Password hashing failed for email {Email}, CorrelationId: {CorrelationId}", email, correlationId);
+            throw new PasswordHashingFailedException();
+        }
+
         var user = new User
         {
             Email = email,
-            PasswordHash = HashPassword(password),
+            PasswordHash = passwordHash,
             Role = "User",
             CreatedAt = DateTime.UtcNow
         };
@@ -102,8 +114,19 @@ public class AuthService : IAuthService
             throw new InvalidCredentialsException();
         }
 
-        var accessToken = _tokens.GenerateAccessToken(user);
-        var refreshToken = _tokens.GenerateRefreshToken();
+        string accessToken;
+        string refreshToken;
+
+        try
+        {
+            accessToken = _tokens.GenerateAccessToken(user);
+            refreshToken = _tokens.GenerateRefreshToken();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to generate tokens for user {UserId}, CorrelationId: {CorrelationId}", user.Id, correlationId);
+            throw;
+        }
 
         var refreshTokenEntity = new RefreshToken
         {
@@ -114,14 +137,18 @@ public class AuthService : IAuthService
             ExpiresAt = DateTime.UtcNow.AddDays(_refreshOptions.DaysValid)
         };
 
+        using var transaction = await _dbContext.Database.BeginTransactionAsync();
         try
         {
             await _refreshTokens.AddAsync(refreshTokenEntity);
             await _dbContext.SaveChangesAsync();
+
+            await transaction.CommitAsync();
         }
         catch (DbUpdateException dbEx)
         {
             _logger.LogWarning(dbEx, "Failed to create refresh token for user {UserId}, CorrelationId: {CorrelationId}", user.Id, correlationId);
+            await transaction.RollbackAsync();
             throw new RefreshTokenCreationFailedException(dbEx);
         }
 
@@ -144,23 +171,36 @@ public class AuthService : IAuthService
 
     private static bool VerifyPassword(string password, string encodedFromDb)
     {
-        var parts = encodedFromDb.Split('$', StringSplitOptions.RemoveEmptyEntries);
-        var paramsPart = parts[2];
-        var salt = Convert.FromBase64String(parts[3]);
-        var expectedHash = Convert.FromBase64String(parts[4]);
-        int memory = 65536, iterations = 3, parallelism = 4;
-        foreach (var kv in paramsPart.Split(',', StringSplitOptions.RemoveEmptyEntries))
+        try
         {
-            if (kv.StartsWith("m=")) memory = int.Parse(kv.Substring(2));
-            if (kv.StartsWith("t=")) iterations = int.Parse(kv.Substring(2));
-            if (kv.StartsWith("p=")) parallelism = int.Parse(kv.Substring(2));
+            var parts = encodedFromDb.Split('$', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length < 5 || parts[0] != "argon2id")
+                throw new FormatException("Invalid password hash format.");
+
+            var paramsPart = parts[2];
+            var salt = Convert.FromBase64String(parts[3]);
+            var expectedHash = Convert.FromBase64String(parts[4]);
+
+            int memory = 65536, iterations = 3, parallelism = 4;
+            foreach (var kv in paramsPart.Split(',', StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (kv.StartsWith("m=")) memory = int.Parse(kv.Substring(2));
+                if (kv.StartsWith("t=")) iterations = int.Parse(kv.Substring(2));
+                if (kv.StartsWith("p=")) parallelism = int.Parse(kv.Substring(2));
+            }
+
+            using var argon2 = new Argon2id(Encoding.UTF8.GetBytes(password));
+            argon2.Salt = salt;
+            argon2.MemorySize = memory;
+            argon2.Iterations = iterations;
+            argon2.DegreeOfParallelism = parallelism;
+
+            var actualHash = argon2.GetBytes(expectedHash.Length);
+            return CryptographicOperations.FixedTimeEquals(actualHash, expectedHash);
         }
-        using var argon2 = new Argon2id(Encoding.UTF8.GetBytes(password));
-        argon2.Salt = salt;
-        argon2.MemorySize = memory;
-        argon2.Iterations = iterations;
-        argon2.DegreeOfParallelism = parallelism;
-        var actualHash = argon2.GetBytes(expectedHash.Length);
-        return CryptographicOperations.FixedTimeEquals(actualHash, expectedHash);
+        catch (Exception ex)
+        {
+            throw new PasswordVerificationFailedException("Password verification failed due to internal error.", ex);
+        }
     }
 }

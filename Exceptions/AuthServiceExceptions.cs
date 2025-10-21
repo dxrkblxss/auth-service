@@ -51,5 +51,24 @@ public class RefreshTokenCreationFailedException : AuthServiceException
 
 public class RefreshTokenReplayDetectedException : AuthServiceException
 {
-    public RefreshTokenReplayDetectedException() : base("Refresh token replay detected.") {}
+    public RefreshTokenReplayDetectedException() : base("Refresh token replay detected.") { }
+}
+
+public class PasswordHashingFailedException : AuthServiceException
+{
+    public PasswordHashingFailedException() : base("Password hashing failed.") { }
+    public PasswordHashingFailedException(Exception inner) : base("Password hashing failed.", inner) { }
+}
+
+public class PasswordVerificationFailedException : AuthServiceException
+{
+    public PasswordVerificationFailedException() : base("Password verification failed.") { }
+    public PasswordVerificationFailedException(Exception inner) : base("Password verification failed.", inner) { }
+    public PasswordVerificationFailedException(string message, Exception inner) : base(message, inner) { }
+}
+
+public class RefreshTokenGenerationFailedException : AuthServiceException
+{
+    public RefreshTokenGenerationFailedException() : base("Refresh token generation failed.") { }
+    public RefreshTokenGenerationFailedException(Exception inner) : base("Refresh token generation failed.", inner) { }
 }
