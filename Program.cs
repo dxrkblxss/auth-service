@@ -18,6 +18,25 @@ public class Program
     {
         var builder = WebApplication.CreateBuilder(args);
 
+        // --- Load secrets from environment variables (if provided) ---
+        var jwtEnv = Environment.GetEnvironmentVariable("JWT_KEY") ?? Environment.GetEnvironmentVariable("Jwt__Key");
+        if (!string.IsNullOrEmpty(jwtEnv))
+        {
+            builder.Configuration["Jwt:Key"] = jwtEnv;
+        }
+
+        var connEnv = Environment.GetEnvironmentVariable("DEFAULT_CONNECTION") ?? Environment.GetEnvironmentVariable("ConnectionStrings__DefaultConnection");
+        if (!string.IsNullOrEmpty(connEnv))
+        {
+            builder.Configuration["ConnectionStrings:DefaultConnection"] = connEnv;
+        }
+
+        var redisEnv = Environment.GetEnvironmentVariable("REDIS__CONNECTION") ?? Environment.GetEnvironmentVariable("Redis__Connection");
+        if (!string.IsNullOrEmpty(redisEnv))
+        {
+            builder.Configuration["Redis:Connection"] = redisEnv;
+        }
+
         // --- Logging ---
         builder.Logging.ClearProviders();
         builder.Logging.AddConfiguration(builder.Configuration.GetSection("Logging"));
