@@ -30,3 +30,4 @@ docker-compose.override.*
 *.sln.iml
 .DS_Store
 Thumbs.db
+NuGetCache/

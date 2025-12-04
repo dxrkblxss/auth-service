@@ -112,15 +112,31 @@ public class Program
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var migrateLogger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
-            try
+
+            var maxRetries = 20;
+            var delay = TimeSpan.FromSeconds(5);
+
+            for (int i = 0; i < maxRetries; i++)
             {
-                db.Database.Migrate();
-                migrateLogger.LogInformation("Database migrations applied successfully");
-            }
-            catch (Exception ex)
-            {
-                migrateLogger.LogCritical(ex, "Failed to apply database migrations");
-                app.Lifetime.StopApplication();
+                try
+                {
+                    db.Database.Migrate();
+                    migrateLogger.LogInformation("Database migrations applied successfully");
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    migrateLogger.LogWarning(ex, "Database not ready, retrying {Attempt}/{MaxRetries}", i + 1, maxRetries);
+                    if (i == maxRetries - 1)
+                    {
+                        migrateLogger.LogCritical("Could not apply database migrations after {MaxRetries} attempts", maxRetries);
+                        app.Lifetime.StopApplication();
+                    }
+                    else
+                    {
+                        Thread.Sleep(delay);
+                    }
+                }
             }
         }
 
