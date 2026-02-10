@@ -25,7 +25,6 @@ public interface ITokenService
 public class TokenService : ITokenService
 {
     private readonly JwtOptions _jwtOptions;
-    private readonly RefreshTokenOptions _refreshTokenOptions;
     private readonly SymmetricSecurityKey _signingKey;
     private readonly ILogger<AuthService> _logger;
     private readonly RefreshTokenOptions _refreshOptions;
@@ -33,10 +32,9 @@ public class TokenService : ITokenService
     private readonly AppDbContext _dbContext;
     private readonly IUserRepository _users;
 
-    public TokenService(IOptions<JwtOptions> jwtOptions, IOptions<RefreshTokenOptions> refreshTokenOptions, IOptions<RefreshTokenOptions> refreshOptions, ILogger<AuthService> logger, AppDbContext dbContext, IUserRepository users, IRefreshTokenRepository refreshTokens)
+    public TokenService(IOptions<JwtOptions> jwtOptions, IOptions<RefreshTokenOptions> refreshOptions, ILogger<AuthService> logger, AppDbContext dbContext, IUserRepository users, IRefreshTokenRepository refreshTokens)
     {
         _jwtOptions = jwtOptions.Value;
-        _refreshTokenOptions = refreshTokenOptions.Value;
 
         if (_jwtOptions.Key.Length < 32)
             throw new InvalidOperationException("JWT key must be at least 32 characters long for security reasons.");
@@ -57,7 +55,7 @@ public class TokenService : ITokenService
 
     public string GenerateRefreshToken()
     {
-        return WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(_refreshTokenOptions.TokenLengthBytes));
+        return WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(_refreshOptions.TokenLengthBytes));
     }
 
     public string HashRefreshToken(string refreshToken)
@@ -66,105 +64,74 @@ public class TokenService : ITokenService
         var hash = SHA256.HashData(bytes);
         return Convert.ToBase64String(hash);
     }
-
     public async Task<(string accessToken, string refreshToken)> RefreshTokenAsync(string refreshToken, string correlationId)
     {
-        try
+        _logger.LogInformation("Refresh token request received, CorrelationId: {CorrelationId}", correlationId);
+
+        if (string.IsNullOrWhiteSpace(refreshToken))
         {
-            _logger.LogInformation("Refresh token request received, CorrelationId: {CorrelationId}", correlationId);
+            _logger.LogWarning("Refresh failed: missing token, CorrelationId: {CorrelationId}", correlationId);
+            throw new MissingRefreshTokenException();
+        }
 
-            if (string.IsNullOrWhiteSpace(refreshToken))
-            {
-                _logger.LogWarning("Refresh failed: missing token, CorrelationId: {CorrelationId}", correlationId);
-                throw new MissingRefreshTokenException();
-            }
+        var tokenHash = HashRefreshToken(refreshToken);
 
-            var tokenHash = HashRefreshToken(refreshToken);
+        var strategy = _dbContext.Database.CreateExecutionStrategy();
 
+        return await strategy.ExecuteAsync(async () =>
+        {
             using var tx = await _dbContext.Database.BeginTransactionAsync();
-
-            var refreshTokenEntity = await _refreshTokens.GetValidByTokenHashAsync(tokenHash, forUpdate: true);
-
-            if (refreshTokenEntity == null)
-            {
-                _logger.LogWarning("Refresh failed: invalid or expired token, CorrelationId: {CorrelationId}", correlationId);
-                throw new InvalidRefreshTokenException();
-            }
-
-            if (refreshTokenEntity.RevokedAt.HasValue)
-            {
-                _logger.LogWarning("Replay detected: token already revoked, RefreshTokenId: {TokenId}, UserId: {UserId}, CorrelationId: {CorrelationId}",
-                    refreshTokenEntity.Id, refreshTokenEntity.UserId, correlationId);
-
-                var familyId = refreshTokenEntity.FamilyId;
-                await _refreshTokens.RevokeFamilyTokensAsync(familyId);
-                throw new RefreshTokenReplayDetectedException();
-            }
-
-            var user = await _users.GetByIdAsync(refreshTokenEntity.UserId);
-
-            if (user == null)
-            {
-                _logger.LogError("Inconsistent state: user not found for valid refresh token, UserId: {UserId}, CorrelationId: {CorrelationId}",
-                    refreshTokenEntity.UserId, correlationId);
-                throw new InvalidRefreshTokenException();
-            }
-
-            var newAccessToken = GenerateAccessToken(user);
-            string newRefreshToken;
             try
             {
-                newRefreshToken = GenerateRefreshToken();
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to generate refresh token, UserId: {UserId}, CorrelationId: {CorrelationId}", user.Id, correlationId);
-                throw new RefreshTokenGenerationFailedException(ex);
-            }
+                var refreshTokenEntity = await _refreshTokens.GetValidByTokenHashAsync(tokenHash, forUpdate: true);
 
-            var newRefreshTokenEntity = new RefreshToken
-            {
-                UserId = user.Id,
-                TokenHash = HashRefreshToken(newRefreshToken),
-                FamilyId = refreshTokenEntity.FamilyId,
-                CreatedAt = DateTime.UtcNow,
-                ExpiresAt = DateTime.UtcNow.AddDays(_refreshOptions.DaysValid)
-            };
+                if (refreshTokenEntity == null)
+                {
+                    _logger.LogWarning("Refresh failed: invalid or expired token, CorrelationId: {CorrelationId}", correlationId);
+                    throw new InvalidRefreshTokenException();
+                }
 
-            try
-            {
+                if (refreshTokenEntity.RevokedAt.HasValue)
+                {
+                    _logger.LogWarning("Replay detected: token already revoked, CorrelationId: {CorrelationId}", correlationId);
+                    await _refreshTokens.RevokeFamilyTokensAsync(refreshTokenEntity.FamilyId);
+                    await _dbContext.SaveChangesAsync();
+                    await tx.CommitAsync();
+                    throw new RefreshTokenReplayDetectedException();
+                }
+
+                var user = await _users.GetByIdAsync(refreshTokenEntity.UserId) ?? throw new InvalidRefreshTokenException();
+                var newAccessToken = GenerateAccessToken(user);
+                var newRefreshToken = GenerateRefreshToken();
+
+                var newRefreshTokenEntity = new RefreshToken
+                {
+                    UserId = user.Id,
+                    TokenHash = HashRefreshToken(newRefreshToken),
+                    FamilyId = refreshTokenEntity.FamilyId,
+                    CreatedAt = DateTime.UtcNow,
+                    ExpiresAt = DateTime.UtcNow.AddDays(_refreshOptions.DaysValid)
+                };
+
                 refreshTokenEntity.RevokedAt = DateTime.UtcNow;
                 refreshTokenEntity.ReplacedBy = newRefreshTokenEntity.Id;
+
                 await _refreshTokens.AddAsync(newRefreshTokenEntity);
                 await _dbContext.SaveChangesAsync();
-            }
-            catch (DbUpdateException dbEx)
-            {
-                _logger.LogWarning(dbEx, "Failed to create or update refresh tokens for user {UserId}, OldTokenId: {OldTokenId}, CorrelationId: {CorrelationId}",
-                    user.Id, refreshTokenEntity.Id, correlationId);
-
-                throw new RefreshTokenCreationFailedException(dbEx);
-            }
-
-            try
-            {
                 await tx.CommitAsync();
+
+                _logger.LogInformation("Issued new tokens for user {UserId}, CorrelationId: {CorrelationId}", user.Id, correlationId);
+                return (newAccessToken, newRefreshToken);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to commit transaction for refresh token replacement, UserId: {UserId}, CorrelationId: {CorrelationId}", user.Id, correlationId);
+                if (ex is MissingRefreshTokenException || ex is InvalidRefreshTokenException || ex is RefreshTokenReplayDetectedException)
+                    throw;
+
+                _logger.LogError(ex, "Unexpected error during refresh, CorrelationId: {CorrelationId}", correlationId);
                 throw;
             }
-
-            _logger.LogInformation("Issued new tokens for user {UserId}, NewRefreshTokenId: {TokenId}, CorrelationId: {CorrelationId}", user.Id, newRefreshTokenEntity.Id, correlationId);
-
-            return (newAccessToken, newRefreshToken);
-        }
-        catch (Exception ex) when (!(ex is MissingRefreshTokenException || ex is InvalidRefreshTokenException || ex is RefreshTokenReplayDetectedException))
-        {
-            _logger.LogError(ex, "Unexpected error during refresh token processing, CorrelationId: {CorrelationId}", correlationId);
-            throw;
-        }
+        });
     }
 
     private string CreateJwtToken(User user)
@@ -172,10 +139,10 @@ public class TokenService : ITokenService
         var creds = new SigningCredentials(_signingKey, SecurityAlgorithms.HmacSha256);
         var claims = new List<Claim>
         {
-            new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
-            new Claim(JwtRegisteredClaimNames.Email, user.Email),
-            new Claim(ClaimTypes.Role, user.Role),
-            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
+            new(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
+            new(JwtRegisteredClaimNames.Email, user.Email),
+            new(ClaimTypes.Role, user.Role),
+            new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
         };
 
         var now = DateTime.UtcNow;

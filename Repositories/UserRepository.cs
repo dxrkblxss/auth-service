@@ -39,6 +39,5 @@ public class UserRepository : IUserRepository
     public async Task AddAsync(User user)
     {
         _dbContext.Users.Add(user);
-        await _dbContext.SaveChangesAsync();
     }
 }

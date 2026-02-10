@@ -14,8 +14,9 @@ namespace AuthService.Services;
 
 public interface IAuthService
 {
-    Task<User> SignUpAsync(string email, string password, string correlationId);
+    Task<User> SignUpAsync(string email, string password, string name, string correlationId);
     Task<(string accessToken, string refreshToken)> LoginAsync(string email, string password, string correlationId);
+    Task LogoutAsync(string tokenHash, string correlationId);
 }
 
 public class AuthService : IAuthService
@@ -40,13 +41,13 @@ public class AuthService : IAuthService
         _logger = logger;
     }
 
-    public async Task<User> SignUpAsync(string email, string password, string correlationId)
+    public async Task<User> SignUpAsync(string email, string password, string name, string correlationId)
     {
         _logger.LogInformation("Signup attempt for email {Email}, CorrelationId: {CorrelationId}", email, correlationId);
 
-        if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(password))
+        if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(password))
         {
-            _logger.LogWarning("Signup failed: missing email or password, CorrelationId: {CorrelationId}", correlationId);
+            _logger.LogWarning("Signup failed: missing name, email or password, CorrelationId: {CorrelationId}", correlationId);
             throw new MissingFieldsException();
         }
 
@@ -79,22 +80,33 @@ public class AuthService : IAuthService
             Email = email,
             PasswordHash = passwordHash,
             Role = "User",
+            Name = name,
             CreatedAt = DateTime.UtcNow
         };
 
-        try
-        {
-            await _users.AddAsync(user);
-        }
-        catch (DbUpdateException dbEx)
-        {
-            _logger.LogWarning(dbEx, "Failed to create user {Email}, CorrelationId: {CorrelationId}", email, correlationId);
-            throw new UserCreationFailedException();
-        }
+        var strategy = _dbContext.Database.CreateExecutionStrategy();
 
-        _logger.LogInformation("User created successfully {UserId}, CorrelationId: {CorrelationId}", user.Id, correlationId);
+        return await strategy.ExecuteAsync(async () =>
+        {
+            using var transaction = await _dbContext.Database.BeginTransactionAsync();
+            try
+            {
+                await _users.AddAsync(user);
+                await _dbContext.SaveChangesAsync();
 
-        return user;
+                user.Username = $"user{user.Id}";
+                await _dbContext.SaveChangesAsync();
+
+                await transaction.CommitAsync();
+                _logger.LogInformation("User created successfully {UserId}, CorrelationId: {CorrelationId}", user.Id, correlationId);
+                return user;
+            }
+            catch
+            {
+                await transaction.RollbackAsync();
+                throw;
+            }
+        });
     }
 
     public async Task<(string accessToken, string refreshToken)> LoginAsync(string email, string password, string correlationId)
@@ -137,24 +149,59 @@ public class AuthService : IAuthService
             ExpiresAt = DateTime.UtcNow.AddDays(_refreshOptions.DaysValid)
         };
 
-        using var transaction = await _dbContext.Database.BeginTransactionAsync();
+        var strategy = _dbContext.Database.CreateExecutionStrategy();
+
+        return await strategy.ExecuteAsync(async () =>
+        {
+
+            using var transaction = await _dbContext.Database.BeginTransactionAsync();
+            try
+            {
+                await _refreshTokens.AddAsync(refreshTokenEntity);
+                await _dbContext.SaveChangesAsync();
+                await transaction.CommitAsync();
+
+                return (accessToken, refreshToken);
+            }
+            catch (DbUpdateException dbEx)
+            {
+                await transaction.RollbackAsync();
+                throw new RefreshTokenCreationFailedException(dbEx);
+            }
+        });
+    }
+
+    public async Task LogoutAsync(string tokenHash, string correlationId)
+    {
+        if (string.IsNullOrWhiteSpace(tokenHash))
+        {
+            _logger.LogWarning("Logout failed: missing token hash. CorrelationId: {CorrelationId}", correlationId);
+            return;
+        }
+
+        var refreshToken = await _refreshTokens.GetValidByTokenHashAsync(tokenHash);
+
+        if (refreshToken == null)
+        {
+            _logger.LogInformation("Logout attempted, but token not found or expired. CorrelationId: {CorrelationId}", correlationId);
+            return;
+        }
+
         try
         {
-            await _refreshTokens.AddAsync(refreshTokenEntity);
+            _refreshTokens.Delete(refreshToken);
             await _dbContext.SaveChangesAsync();
-
-            await transaction.CommitAsync();
+            _logger.LogInformation(
+                "Logout successful. Token {TokenId} deleted for user {UserId}. CorrelationId: {CorrelationId}",
+                refreshToken.Id, refreshToken.UserId, correlationId);
         }
         catch (DbUpdateException dbEx)
         {
-            _logger.LogWarning(dbEx, "Failed to create refresh token for user {UserId}, CorrelationId: {CorrelationId}", user.Id, correlationId);
-            await transaction.RollbackAsync();
-            throw new RefreshTokenCreationFailedException(dbEx);
+            _logger.LogError(dbEx,
+                "Logout failed: could not delete refresh token {TokenId} for user {UserId}. CorrelationId: {CorrelationId}",
+                refreshToken.Id, refreshToken.UserId, correlationId);
+            throw new Exception("Logout failed due to database error.", dbEx);
         }
-
-        _logger.LogInformation("User {UserId} logged in, refresh token {TokenId} created, CorrelationId: {CorrelationId}", user.Id, refreshTokenEntity.Id, correlationId);
-
-        return (accessToken, refreshToken);
     }
 
     private string HashPassword(string password)

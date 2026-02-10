@@ -1,5 +1,3 @@
-// TODO: Добавить подтверждение email с помощью шестизначного кода
-
 using Microsoft.EntityFrameworkCore;
 using StackExchange.Redis;
 using AuthService.Data;
@@ -9,6 +7,14 @@ using AuthService.Options;
 using AuthService.Services;
 using AuthService.Repositories;
 using AuthService.DTOs;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Tokens;
+using System.Text;
+using Microsoft.AspNetCore.Mvc;
+using System.Security.Claims;
+using System.IdentityModel.Tokens.Jwt;
+using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.OpenApi.Models;
 
 namespace AuthService;
 
@@ -18,26 +24,17 @@ public class Program
     {
         var builder = WebApplication.CreateBuilder(args);
 
-        // --- Load secrets from environment variables (if provided) ---
-        var jwtEnv = Environment.GetEnvironmentVariable("JWT_KEY") ?? Environment.GetEnvironmentVariable("Jwt__Key");
-        if (!string.IsNullOrEmpty(jwtEnv))
+        builder.Services.Configure<ForwardedHeadersOptions>(options =>
         {
-            builder.Configuration["Jwt:Key"] = jwtEnv;
-        }
+            options.ForwardedHeaders =
+                ForwardedHeaders.XForwardedFor |
+                ForwardedHeaders.XForwardedHost |
+                ForwardedHeaders.XForwardedProto;
 
-        var connEnv = Environment.GetEnvironmentVariable("DEFAULT_CONNECTION") ?? Environment.GetEnvironmentVariable("ConnectionStrings__DefaultConnection");
-        if (!string.IsNullOrEmpty(connEnv))
-        {
-            builder.Configuration["ConnectionStrings:DefaultConnection"] = connEnv;
-        }
+            options.KnownNetworks.Clear();
+            options.KnownProxies.Clear();
+        });
 
-        var redisEnv = Environment.GetEnvironmentVariable("REDIS__CONNECTION") ?? Environment.GetEnvironmentVariable("Redis__Connection");
-        if (!string.IsNullOrEmpty(redisEnv))
-        {
-            builder.Configuration["Redis:Connection"] = redisEnv;
-        }
-
-        // --- Logging ---
         builder.Logging.ClearProviders();
         builder.Logging.AddConfiguration(builder.Configuration.GetSection("Logging"));
         builder.Logging.AddSimpleConsole(options =>
@@ -48,7 +45,7 @@ public class Program
         });
         builder.Logging.AddDebug();
 
-        // --- CORS ---
+
         builder.Services.AddCors(options =>
         {
             options.AddPolicy("AllowAll", policy =>
@@ -57,57 +54,121 @@ public class Program
                       .AllowAnyMethod());
         });
 
-        // --- DB ---
-        var connStr = builder.Configuration.GetConnectionString("DefaultConnection")
-            ?? throw new InvalidOperationException("DefaultConnection is not configured.");
-        builder.Services.AddDbContext<AppDbContext>(options => options.UseNpgsql(connStr));
+        var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
+            ?? throw new InvalidOperationException("DefaultConnection not set");
 
-        // --- Redis ---
-        var redisConnection = builder.Configuration["Redis:Connection"] ?? "redis:6379";
-        builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
-        {
-            var logger = sp.GetRequiredService<ILogger<Program>>();
-            for (int i = 0; i < 3; i++)
+        builder.Services.AddDbContext<AppDbContext>(options =>
+            options.UseNpgsql(connectionString, npgsqlOptions =>
             {
-                try
-                {
-                    return ConnectionMultiplexer.Connect(redisConnection);
-                }
-                catch (RedisConnectionException ex)
-                {
-                    logger.LogWarning(ex, "Retry {Attempt}/3: Failed to connect to Redis", i + 1);
-                    Thread.Sleep(2000);
-                }
-            }
-            logger.LogCritical("Could not connect to Redis after 3 attempts");
-            throw new RedisConnectionException(ConnectionFailureType.UnableToConnect, "Failed to connect after retries");
-        });
+                npgsqlOptions.EnableRetryOnFailure(
+                    maxRetryCount: 5,
+                    maxRetryDelay: TimeSpan.FromSeconds(5),
+                    errorCodesToAdd: null);
+            }));
 
-        // --- Options ---
-        builder.Services.Configure<RefreshTokenOptions>(
-            builder.Configuration.GetSection("RefreshTokenSettings"));
+        builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
+            ConnectionMultiplexer.Connect(builder.Configuration.GetConnectionString("Redis") ?? "redis:6379"));
 
-        builder.Services.Configure<JwtOptions>(
-            builder.Configuration.GetSection("Jwt"));
+        builder.Services.Configure<RefreshTokenOptions>(builder.Configuration.GetSection("RefreshTokenSettings"));
+        builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection("Jwt"));
+        builder.Services.Configure<HashingOptions>(builder.Configuration.GetSection("Hashing"));
 
-        builder.Services.Configure<HashingOptions>(
-            builder.Configuration.GetSection("Hashing"));
-
-        // --- Repositories ---
         builder.Services.AddScoped<IUserRepository, UserRepository>();
         builder.Services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
-
-        // --- Services ---
+        builder.Services.AddScoped<IUserService, UserService>();
         builder.Services.AddScoped<ITokenService, TokenService>();
         builder.Services.AddScoped<IAuthService, Services.AuthService>();
 
+        var jwtKey = builder.Configuration["Jwt:Key"] ?? throw new InvalidOperationException("Jwt:Key not set");
+        builder.Services
+            .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+            .AddJwtBearer(options =>
+            {
+                options.MapInboundClaims = false;
+
+                options.TokenValidationParameters = new TokenValidationParameters
+                {
+                    ValidateIssuer = true,
+                    ValidIssuer = "AuthService",
+                    ValidateAudience = true,
+                    ValidAudience = "Backend",
+                    ValidateLifetime = true,
+                    ValidateIssuerSigningKey = true,
+                    IssuerSigningKey = new SymmetricSecurityKey(
+                        Encoding.UTF8.GetBytes(jwtKey)
+                    )
+                };
+            });
+
+        builder.Services.AddAuthorization();
+
+        builder.Services.AddEndpointsApiExplorer();
+        builder.Services.AddSwaggerGen(c =>
+        {
+            c.SwaggerDoc("v1", new OpenApiInfo { Title = "Auth Service API", Version = "v1" });
+
+            c.AddSecurityDefinition("Bearer", new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+            {
+                Name = "Authorization",
+                Type = Microsoft.OpenApi.Models.SecuritySchemeType.Http,
+                Scheme = "Bearer",
+                BearerFormat = "JWT",
+                In = Microsoft.OpenApi.Models.ParameterLocation.Header,
+                Description = "Введите JWT токен"
+            });
+
+            c.AddSecurityRequirement(new Microsoft.OpenApi.Models.OpenApiSecurityRequirement
+            {
+                {
+                    new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+                    {
+                        Reference = new Microsoft.OpenApi.Models.OpenApiReference
+                        {
+                            Type = Microsoft.OpenApi.Models.ReferenceType.SecurityScheme,
+                            Id = "Bearer"
+                        }
+                    },
+                    Array.Empty<string>()
+                }
+            });
+        });
+
         var app = builder.Build();
 
-        // --- Log environment ---
-        var logger = app.Services.GetRequiredService<ILogger<Program>>();
-        logger.LogInformation("Running in {Environment} environment", builder.Environment.EnvironmentName);
+        app.UseForwardedHeaders();
 
-        // --- DB Migration ---
+        app.UseSwagger(c =>
+        {
+            c.PreSerializeFilters.Add((swaggerDoc, httpReq) =>
+            {
+                var fallbackPrefix = app.Configuration["Swagger:BasePath"]
+                    ?? Environment.GetEnvironmentVariable("SWAGGER_BASEPATH")
+                    ?? string.Empty;
+
+                var prefix = httpReq.Headers["X-Forwarded-Prefix"].FirstOrDefault();
+                if (string.IsNullOrEmpty(prefix))
+                    prefix = fallbackPrefix;
+
+                var scheme = httpReq.Headers["X-Forwarded-Proto"].FirstOrDefault() ?? httpReq.Scheme;
+                var host = httpReq.Headers["X-Forwarded-Host"].FirstOrDefault() ?? httpReq.Host.Value;
+
+                var baseUrl = $"{scheme}://{host}{prefix}";
+                swaggerDoc.Servers =
+                [
+                    new() { Url = baseUrl }
+                ];
+            });
+        });
+
+        app.UseSwaggerUI(c =>
+        {
+            c.SwaggerEndpoint("/swagger/v1/swagger.json", "My API V1");
+            c.RoutePrefix = "";
+        });
+
+        var logger = app.Services.GetRequiredService<ILogger<Program>>();
+        logger.LogInformation("Running in {Environment}", builder.Environment.EnvironmentName);
+
         using (var scope = app.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -126,96 +187,78 @@ public class Program
                 }
                 catch (Exception ex)
                 {
-                    migrateLogger.LogWarning(ex, "Database not ready, retrying {Attempt}/{MaxRetries}", i + 1, maxRetries);
+                    migrateLogger.LogWarning(ex, "Database not ready, retry {Attempt}/{MaxRetries}", i + 1, maxRetries);
                     if (i == maxRetries - 1)
                     {
                         migrateLogger.LogCritical("Could not apply database migrations after {MaxRetries} attempts", maxRetries);
                         app.Lifetime.StopApplication();
                     }
-                    else
-                    {
-                        Thread.Sleep(delay);
-                    }
+                    else Thread.Sleep(delay);
                 }
             }
         }
 
         app.UseMiddleware<CorrelationIdMiddleware>();
         app.UseMiddleware<ExceptionHandlingMiddleware>();
-
-        logger.LogInformation("Starting AuthService application");
-
         app.UseCors("AllowAll");
 
-        // --- Health check ---
-        app.MapGet("/ping", (HttpContext ctx, ILogger<Program> log) =>
+        app.MapGet("/health", (HttpContext ctx) =>
         {
-            log.LogInformation("Ping received, CorrelationId: {CorrelationId}", ctx.GetCorrelationId());
-            return Results.Ok(new { pong = "pong", correlation_id = ctx.GetCorrelationId() });
+            return Results.Ok(new { correlation_id = ctx.GetCorrelationId() });
         });
 
-        // --- Signup ---
-        app.MapPost("/signup", async (AuthRequest request, IAuthService authService, ILogger<Program> log, HttpContext ctx) =>
+        app.MapPost("/signup", async (AuthRequest request, [FromServices] IAuthService authService, HttpContext ctx) =>
         {
             var correlationId = ctx.GetCorrelationId();
-            try
-            {
-                var user = await authService.SignUpAsync(request.Email, request.Password, correlationId);
-                return Results.Created($"/users/{user.Id}", new { user.Id, user.Email, correlation_id = correlationId });
-            }
-            catch (Exception ex)
-            {
-                log.LogError(ex, "Signup failed for {Email}, CorrelationId: {CorrelationId}", request.Email, correlationId);
-                throw;
-            }
+            var user = await authService.SignUpAsync(request.Email, request.Password, request.Name, correlationId);
+            return Results.Created($"/users/{user.Id}", new { user.Id, user.Email, correlation_id = correlationId });
         });
 
-        // --- Login ---
-        app.MapPost("/login", async (AuthRequest request, IAuthService authService, ILogger<Program> log, HttpContext ctx) =>
+        app.MapPost("/login", async (AuthRequest request, [FromServices] IAuthService authService, HttpContext ctx) =>
         {
             var correlationId = ctx.GetCorrelationId();
-
-            try
-            {
-                var (accessToken, refreshToken) = await authService.LoginAsync(request.Email, request.Password, correlationId);
-                return Results.Ok(new { access_token = accessToken, refresh_token = refreshToken, correlation_id = correlationId });
-            }
-            catch (Exception ex)
-            {
-                log.LogError(ex, "Login failed for {Email}, CorrelationId: {CorrelationId}", request.Email, correlationId);
-                throw;
-            }
+            var (accessToken, refreshToken) = await authService.LoginAsync(request.Email, request.Password, correlationId);
+            return Results.Ok(new { access_token = accessToken, refresh_token = refreshToken, correlation_id = correlationId });
         });
 
-        // --- Refresh ---
-        app.MapPost("/refresh", async (RefreshRequest request, ITokenService tokenService, ILogger<Program> log, HttpContext ctx) =>
+        app.MapPost("/logout", async (LogoutRequest request, [FromServices] IAuthService authService, HttpContext ctx) =>
+        {
+            var correlationId = ctx.GetCorrelationId();
+            await authService.LogoutAsync(request.RefreshToken, correlationId);
+            return Results.Ok(new { message = "Logged out successfully", correlation_id = correlationId });
+        });
+
+        app.MapPost("/refresh", async (RefreshRequest request, [FromServices] ITokenService tokenService, HttpContext ctx) =>
+        {
+            var correlationId = ctx.GetCorrelationId();
+            var (accessToken, refreshToken) = await tokenService.RefreshTokenAsync(request.RefreshToken, correlationId);
+            return Results.Ok(new { access_token = accessToken, refresh_token = refreshToken, correlation_id = correlationId });
+        });
+
+        app.MapGet("/me", async ([FromServices] IUserService userService, HttpContext ctx) =>
         {
             var correlationId = ctx.GetCorrelationId();
 
-            try
-            {
-                var (accessToken, refreshToken) = await tokenService.RefreshTokenAsync(request.RefreshToken, correlationId);
-                return Results.Ok(new { access_token = accessToken, refresh_token = refreshToken, correlation_id = correlationId });
-            }
-            catch (Exception ex)
-            {
-                log.LogError(ex, "Token refresh failed, CorrelationId: {CorrelationId}", correlationId);
-                throw;
-            }
-        });
+            var userIdStr = ctx.User.FindFirstValue(JwtRegisteredClaimNames.Sub);
 
-        // --- Run app ---
+            if (!Guid.TryParse(userIdStr, out var userId))
+                return Results.Unauthorized();
+
+            var userDto = await userService.GetCurrentUserByIdAsync(userId, correlationId);
+
+            if (userDto == null)
+                return Results.NotFound();
+
+            return Results.Ok(new { user = userDto, correlation_id = correlationId });
+        })
+        .RequireAuthorization();
+
+        app.UseAuthentication();
+        app.UseAuthorization();
+
         app.Urls.Add("http://0.0.0.0:80");
         logger.LogInformation("Listening on {Urls}", string.Join(',', app.Urls));
 
-        try
-        {
-            app.Run();
-        }
-        catch (Exception ex)
-        {
-            logger.LogCritical(ex, "Host terminated unexpectedly");
-            Environment.Exit(1);
-        }
+        app.Run();
     }
 }
