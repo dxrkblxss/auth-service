@@ -1,1 +1,1 @@
-# yava-auth-service
+# authservice
