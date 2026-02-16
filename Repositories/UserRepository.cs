@@ -12,14 +12,9 @@ public interface IUserRepository
     Task AddAsync(User user);
 }
 
-public class UserRepository : IUserRepository
+public class UserRepository(AppDbContext dbContext) : IUserRepository
 {
-    private readonly AppDbContext _dbContext;
-
-    public UserRepository(AppDbContext dbContext)
-    {
-        _dbContext = dbContext;
-    }
+    private readonly AppDbContext _dbContext = dbContext;
 
     public async Task<bool> ExistsAsync(string email)
     {
@@ -38,6 +33,6 @@ public class UserRepository : IUserRepository
 
     public async Task AddAsync(User user)
     {
-        _dbContext.Users.Add(user);
+        await _dbContext.Users.AddAsync(user);
     }
 }

@@ -8,16 +8,10 @@ public interface IUserService
     Task<UserDto?> GetCurrentUserByIdAsync(Guid userId, string correlationId);
 }
 
-public class UserService : IUserService
+public class UserService(IUserRepository users, ILogger<AuthService> logger) : IUserService
 {
-    private readonly IUserRepository _users;
-    private readonly ILogger<AuthService> _logger;
-
-    public UserService(IUserRepository users, ILogger<AuthService> logger)
-    {
-        _users = users;
-        _logger = logger;
-    }
+    private readonly IUserRepository _users = users;
+    private readonly ILogger<AuthService> _logger = logger;
 
     public async Task<UserDto?> GetCurrentUserByIdAsync(Guid userId, string correlationId)
     {

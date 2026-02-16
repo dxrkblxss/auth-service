@@ -45,7 +45,6 @@ public class Program
         });
         builder.Logging.AddDebug();
 
-
         builder.Services.AddCors(options =>
         {
             options.AddPolicy("AllowAll", policy =>
@@ -106,31 +105,6 @@ public class Program
         builder.Services.AddSwaggerGen(c =>
         {
             c.SwaggerDoc("v1", new OpenApiInfo { Title = "Auth Service API", Version = "v1" });
-
-            c.AddSecurityDefinition("Bearer", new Microsoft.OpenApi.Models.OpenApiSecurityScheme
-            {
-                Name = "Authorization",
-                Type = Microsoft.OpenApi.Models.SecuritySchemeType.Http,
-                Scheme = "Bearer",
-                BearerFormat = "JWT",
-                In = Microsoft.OpenApi.Models.ParameterLocation.Header,
-                Description = "Введите JWT токен"
-            });
-
-            c.AddSecurityRequirement(new Microsoft.OpenApi.Models.OpenApiSecurityRequirement
-            {
-                {
-                    new Microsoft.OpenApi.Models.OpenApiSecurityScheme
-                    {
-                        Reference = new Microsoft.OpenApi.Models.OpenApiReference
-                        {
-                            Type = Microsoft.OpenApi.Models.ReferenceType.SecurityScheme,
-                            Id = "Bearer"
-                        }
-                    },
-                    Array.Empty<string>()
-                }
-            });
         });
 
         var app = builder.Build();
@@ -163,7 +137,7 @@ public class Program
         app.UseSwaggerUI(c =>
         {
             c.SwaggerEndpoint("/swagger/v1/swagger.json", "My API V1");
-            c.RoutePrefix = "";
+            c.RoutePrefix = "swagger";
         });
 
         var logger = app.Services.GetRequiredService<ILogger<Program>>();
@@ -171,30 +145,16 @@ public class Program
 
         using (var scope = app.Services.CreateScope())
         {
-            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-            var migrateLogger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
-
-            var maxRetries = 20;
-            var delay = TimeSpan.FromSeconds(5);
-
-            for (int i = 0; i < maxRetries; i++)
+            var services = scope.ServiceProvider;
+            try
             {
-                try
-                {
-                    db.Database.Migrate();
-                    migrateLogger.LogInformation("Database migrations applied successfully");
-                    break;
-                }
-                catch (Exception ex)
-                {
-                    migrateLogger.LogWarning(ex, "Database not ready, retry {Attempt}/{MaxRetries}", i + 1, maxRetries);
-                    if (i == maxRetries - 1)
-                    {
-                        migrateLogger.LogCritical("Could not apply database migrations after {MaxRetries} attempts", maxRetries);
-                        app.Lifetime.StopApplication();
-                    }
-                    else Thread.Sleep(delay);
-                }
+                var context = services.GetRequiredService<AppDbContext>();
+                context.Database.Migrate();
+            }
+            catch (Exception ex)
+            {
+                logger = services.GetRequiredService<ILogger<Program>>();
+                logger.LogError(ex, "An error occurred while migrating the database.");
             }
         }
 
@@ -202,10 +162,7 @@ public class Program
         app.UseMiddleware<ExceptionHandlingMiddleware>();
         app.UseCors("AllowAll");
 
-        app.MapGet("/health", (HttpContext ctx) =>
-        {
-            return Results.Ok(new { correlation_id = ctx.GetCorrelationId() });
-        });
+        app.MapGet("/health", (HttpContext ctx) => Results.Ok(new { correlation_id = ctx.GetCorrelationId() }));
 
         app.MapPost("/signup", async (AuthRequest request, [FromServices] IAuthService authService, HttpContext ctx) =>
         {
@@ -255,9 +212,6 @@ public class Program
 
         app.UseAuthentication();
         app.UseAuthorization();
-
-        app.Urls.Add("http://0.0.0.0:80");
-        logger.LogInformation("Listening on {Urls}", string.Join(',', app.Urls));
 
         app.Run();
     }

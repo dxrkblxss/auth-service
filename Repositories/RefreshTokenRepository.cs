@@ -12,14 +12,9 @@ public interface IRefreshTokenRepository
     Task RevokeFamilyTokensAsync(Guid familyId);
 }
 
-public class RefreshTokenRepository : IRefreshTokenRepository
+public class RefreshTokenRepository(AppDbContext dbContext) : IRefreshTokenRepository
 {
-    private readonly AppDbContext _dbContext;
-
-    public RefreshTokenRepository(AppDbContext dbContext)
-    {
-        _dbContext = dbContext;
-    }
+    private readonly AppDbContext _dbContext = dbContext;
 
     public async Task<RefreshToken?> GetValidByTokenHashAsync(string tokenHash, bool lockForUpdate = false)
     {
