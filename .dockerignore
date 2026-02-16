@@ -1,4 +1,6 @@
 bin/
 obj/
-*.md
-*.dockerfile
+.vs/
+.git/
+*.user
+*.suo

@@ -1,5 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using StackExchange.Redis;
+using Microsoft.OpenApi.Models;
+using Microsoft.AspNetCore.HttpOverrides;
 using AuthService.Data;
 using AuthService.Middleware;
 using AuthService.Extensions;
@@ -13,8 +15,6 @@ using System.Text;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
 using System.IdentityModel.Tokens.Jwt;
-using Microsoft.AspNetCore.HttpOverrides;
-using Microsoft.OpenApi.Models;
 
 namespace AuthService;
 
