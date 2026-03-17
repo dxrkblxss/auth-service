@@ -105,6 +105,30 @@ public class Program
         builder.Services.AddSwaggerGen(c =>
         {
             c.SwaggerDoc("v1", new OpenApiInfo { Title = "Auth Service API", Version = "v1" });
+
+            c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+            {
+                Description = "Enter your JWT token in the following format: Bearer {your_token}",
+                Name = "Authorization",
+                In = ParameterLocation.Header,
+                Type = SecuritySchemeType.ApiKey,
+                Scheme = "Bearer"
+            });
+
+            c.AddSecurityRequirement(new OpenApiSecurityRequirement
+            {
+                {
+                    new OpenApiSecurityScheme
+                    {
+                        Reference = new OpenApiReference
+                        {
+                            Type = ReferenceType.SecurityScheme,
+                            Id = "Bearer"
+                        }
+                    },
+                    Array.Empty<string>()
+                }
+            });
         });
 
         var app = builder.Build();
@@ -162,6 +186,9 @@ public class Program
         app.UseMiddleware<ExceptionHandlingMiddleware>();
         app.UseCors("AllowAll");
 
+        app.UseAuthentication();
+        app.UseAuthorization();
+
         app.MapGet("/health", (HttpContext ctx) => Results.Ok(new { correlation_id = ctx.GetCorrelationId() }));
 
         app.MapPost("/signup", async (AuthRequest request, [FromServices] IAuthService authService, HttpContext ctx) =>
@@ -209,9 +236,6 @@ public class Program
             return Results.Ok(new { user = userDto, correlation_id = correlationId });
         })
         .RequireAuthorization();
-
-        app.UseAuthentication();
-        app.UseAuthorization();
 
         app.Run();
     }
