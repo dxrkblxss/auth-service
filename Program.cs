@@ -9,6 +9,7 @@ using AuthService.Options;
 using AuthService.Services;
 using AuthService.Repositories;
 using AuthService.DTOs;
+using AuthService.Filters;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
@@ -191,33 +192,37 @@ public class Program
 
         app.MapGet("/health", (HttpContext ctx) => Results.Ok(new { correlation_id = ctx.GetCorrelationId() }));
 
-        app.MapPost("/signup", async (AuthRequest request, [FromServices] IAuthService authService, HttpContext ctx) =>
+        app.MapPost("/signup", async (SignupRequest request, [FromServices] IAuthService authService, HttpContext ctx) =>
         {
             var correlationId = ctx.GetCorrelationId();
             var user = await authService.SignUpAsync(request.Email, request.Password, request.Name, correlationId);
             return Results.Created($"/users/{user.Id}", new { user.Id, user.Email, correlation_id = correlationId });
-        });
+        })
+        .AddEndpointFilter<ValidationFilter<SignupRequest>>();
 
-        app.MapPost("/login", async (AuthRequest request, [FromServices] IAuthService authService, HttpContext ctx) =>
+        app.MapPost("/login", async (LoginRequest request, [FromServices] IAuthService authService, HttpContext ctx) =>
         {
             var correlationId = ctx.GetCorrelationId();
             var (accessToken, refreshToken) = await authService.LoginAsync(request.Email, request.Password, correlationId);
             return Results.Ok(new { access_token = accessToken, refresh_token = refreshToken, correlation_id = correlationId });
-        });
+        })
+        .AddEndpointFilter<ValidationFilter<LoginRequest>>();
 
         app.MapPost("/logout", async (LogoutRequest request, [FromServices] IAuthService authService, HttpContext ctx) =>
         {
             var correlationId = ctx.GetCorrelationId();
             await authService.LogoutAsync(request.RefreshToken, correlationId);
             return Results.Ok(new { message = "Logged out successfully", correlation_id = correlationId });
-        });
+        })
+        .AddEndpointFilter<ValidationFilter<LogoutRequest>>();
 
         app.MapPost("/refresh", async (RefreshRequest request, [FromServices] ITokenService tokenService, HttpContext ctx) =>
         {
             var correlationId = ctx.GetCorrelationId();
             var (accessToken, refreshToken) = await tokenService.RefreshTokenAsync(request.RefreshToken, correlationId);
             return Results.Ok(new { access_token = accessToken, refresh_token = refreshToken, correlation_id = correlationId });
-        });
+        })
+        .AddEndpointFilter<ValidationFilter<RefreshRequest>>();
 
         app.MapGet("/me", async ([FromServices] IUserService userService, HttpContext ctx) =>
         {
