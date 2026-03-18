@@ -66,8 +66,13 @@ public class Program
                     errorCodesToAdd: null);
             }));
 
+        var redisConnectionString =
+            builder.Configuration.GetConnectionString("Redis")
+            ?? builder.Configuration["Redis:Connection"]
+            ?? "redis:6379";
+
         builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
-            ConnectionMultiplexer.Connect(builder.Configuration.GetConnectionString("Redis") ?? "redis:6379"));
+            ConnectionMultiplexer.Connect(redisConnectionString));
 
         builder.Services.Configure<RefreshTokenOptions>(builder.Configuration.GetSection("RefreshTokenSettings"));
         builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection("Jwt"));
