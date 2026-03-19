@@ -1,26 +1,25 @@
 # 🔐 Auth Service
 
-[![.NET 9](https://img.shields.io/badge/.NET_9-512BD4?style=for-the-badge\&logo=dotnet\&logoColor=white)](https://dotnet.microsoft.com/en-us/download/dotnet/9.0)
-[![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge\&logo=docker\&logoColor=white)](https://www.docker.com/)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?style=for-the-badge\&logo=postgresql\&logoColor=white)](https://www.postgresql.org/)
-[![JWT](https://img.shields.io/badge/JWT-000000?style=for-the-badge\&logo=jsonwebtokens\&logoColor=white)](https://jwt.io/)
+[![.NET 9](https://img.shields.io/badge/.NET_9-512BD4?style=for-the-badge&logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/en-us/download/dotnet/9.0)
+[![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![JWT](https://img.shields.io/badge/JWT-000000?style=for-the-badge&logo=jsonwebtokens&logoColor=white)](https://jwt.io/)
 [![MIT License](https://img.shields.io/badge/License-MIT-success?style=for-the-badge)](https://opensource.org/licenses/MIT)
 
-Authentication microservice for the **Food Delivery Microservices** project. It provides user signup/login, JWT-based authentication, refresh tokens, and a protected profile endpoint, with PostgreSQL persistence and Docker-friendly startup.
+Authentication microservice for the **Food Delivery Microservices** project. It exposes a small HTTP API for signup, login, token refresh, logout, and current-user retrieval. The service uses **PostgreSQL** for persistence and is designed to run either behind the API Gateway or on its own during local development.
 
 ---
 
 ## ⚡ Features
 
-* User signup / login with **Argon2id** password hashing
-* **JWT access tokens** with refresh token support
-* Secure logout that revokes refresh tokens
-* Protected `/me` endpoint with user claims
-* Correlation ID middleware and custom exception handling
+* Authentication endpoints for **signup**, **login**, **refresh**, **logout**, and **current user**
+* **JWT access tokens** plus refresh token rotation
+* **PostgreSQL** persistence for users and refresh tokens
 * Automatic database migrations on startup
 * Healthcheck endpoint for Docker Compose
-* Swagger UI with **Bearer token** security scheme
+* Swagger UI with **Bearer token** support
 * Forwarded headers support for running behind **YARP**
+* Environment-driven configuration for local and containerized runs
 
 ---
 
@@ -40,7 +39,7 @@ graph TD
     style AuthDB fill:#4169E1,color:#fff
 ```
 
-The service exposes a compact HTTP API and a `/health` endpoint used by container healthchecks.
+The service exposes a small HTTP API and a `/health` endpoint used by Docker Compose healthchecks.
 
 ---
 
@@ -51,15 +50,13 @@ The service exposes a compact HTTP API and a `/health` endpoint used by containe
 * (Optional) .NET 9 SDK for local development
 * (Optional) Git
 
-> **Note:** You can run the service fully containerized without installing the .NET SDK locally.
+> **Note:** You do not need the .NET SDK to run this service in a container. You only need Docker and a reachable PostgreSQL instance.
 
 ---
 
 ## 🚀 Quick Start
 
-You can run the service **standalone** or as part of the **full microservices stack**.
-
-### Full Stack
+If you are using this service as part of the full microservices stack:
 
 ```bash
 # 1. Clone the repository with all microservices (submodules)
@@ -70,85 +67,51 @@ cd food-delivery-microservices
 
 # 3. Configure environment variables (required before start):
 cp .env.example .env
-# No changes needed for a quick test, 
+# No changes needed for a quick test,
 # but recommended to edit for production.
 
 # 4. Spin up the entire infrastructure
-docker-compose up -d --build
+docker compose up -d --build
 ```
 
 > [!IMPORTANT]
-> The Auth Service will be available through the API Gateway at
+> Once the containers are running, the Auth Service is accessible through the API Gateway at
 > `http://localhost:8080/auth`
-
-### Auth Service Only
-
-```bash
-# 1. Clone the repository
-git clone https://github.com/dxrkblxss/auth-service.git
-
-# 2. Go to project directory
-cd auth-service
-
-# 3. Build the Docker image
-docker build -t auth-service:latest .
-
-# 4. Start PostgreSQL first, then run the container with required settings
-docker run -d --name auth-postgres \
-  -e POSTGRES_DB=auth_db \
-  -e POSTGRES_USER=auth_user \
-  -e POSTGRES_PASSWORD=SuperStrongPass123! \
-  -p 5433:5432 \
-  postgres:18-alpine
-
-docker run --rm --name auth-service \
-  -p 8081:80 \
-  -e ASPNETCORE_ENVIRONMENT=Development \
-  -e ConnectionStrings__DefaultConnection='Host=host.docker.internal;Port=5433;Database=auth_db;Username=auth_user;Password=SuperStrongPass123!' \
-  -e Jwt__Key='your-super-secret-jwt-key-at-least-32-chars!!!' \
-  auth-service:latest
-```
-
-> [!IMPORTANT]
-> After startup, the service is available on your host at
-> `http://localhost:8081`
 
 ---
 
 ## ⚙️ Configuration
 
-The service uses standard ASP.NET Core configuration layering:
-
-* `appsettings.json` — shared defaults
-* `appsettings.Development.json` — local development overrides
+The service uses standard ASP.NET Core configuration files plus environment variables.
 
 Main configuration values:
 
-* `ConnectionStrings:DefaultConnection` — PostgreSQL connection string
-* `Jwt:Key` — secret used to sign and validate access tokens
-* `Jwt:Issuer` / Jwt:Audience — token validation metadata
-* `Jwt:AccessTokenMinutes` — access token lifetime
-* `RefreshTokenSettings:DaysValid` — refresh token lifetime
-* `RefreshTokenSettings:TokenLengthBytes` — refresh token entropy
-* `Hashing:*` — Argon2id password hashing parameters
+* `ConnectionStrings:DefaultConnection` - PostgreSQL connection string
+* `Jwt:Key` - secret used to sign and validate access tokens
+* `Jwt:Issuer` - token issuer
+* `Jwt:Audience` - token audience
+* `Jwt:AccessTokenMinutes` - access token lifetime
+* `RefreshTokenSettings:DaysValid` - refresh token lifetime
+* `RefreshTokenSettings:TokenLengthBytes` - refresh token entropy
+* `Hashing:MemorySize`, `Hashing:Iterations`, `Hashing:DegreeOfParallelism` - password hashing settings
+
+When the service is started through the root `docker-compose.yml`, the main values come from the root `.env` file:
+
+* `ASPNETCORE_ENVIRONMENT`
+* `AUTH_DB_NAME`, `AUTH_DB_USER`, `AUTH_DB_PASSWORD`
+* `JWT_KEY`
 
 > [!TIP]
-> You can generate a secure 32-character key using:
+> You can generate a secure key using:
 > `openssl rand -base64 32`
 
 ---
 
 ## 🛠️ Run (development / local testing)
 
-You can run the service **as part of the full stack** or **individually**.
-
-### Full Stack
-
-If you have all services installed via the main repository:
+Run the full stack from the repository root:
 
 ```bash
-cd food-delivery-microservices
-
 docker compose up --build
 ```
 
@@ -158,112 +121,97 @@ Or in detached mode:
 docker compose up -d --build
 ```
 
-> [!IMPORTANT]
-> The Auth Service will be available via the API Gateway at
-> `http://localhost:8080/auth`
+This starts the Auth Service together with its PostgreSQL database and exposes it through the API Gateway at `http://localhost:8080/auth`.
 
-### Auth Service Only
-
-If you want to run only this service locally:
-
-**Using .NET SDK**
+If you want to run the service by itself from the `auth-service/` folder:
 
 ```bash
-# from the service folder
 dotnet restore
-dotnet run
+dotnet run --launch-profile Development
 ```
 
-**Using Docker**
+By default, the `Development` launch profile serves the app on `http://localhost:5163` and uses the connection string from `appsettings.Development.json`.
+
+You can also build the container manually:
 
 ```bash
 docker build -t auth-service:dev .
-docker run --rm --name auth-service \
-  -p 8081:80 \
-  -e ASPNETCORE_ENVIRONMENT=Development \
-  -e ConnectionStrings__DefaultConnection='Host=host.docker.internal;Port=5433;Database=auth_db;Username=auth_user;Password=SuperStrongPass123!' \
-  -e Jwt__Key='your-super-secret-jwt-key-at-least-32-chars!!!' \
-  auth-service:dev
 ```
 
-If you are connecting to a PostgreSQL container, make sure both containers are on the same Docker network.
+When running the container manually, provide a reachable PostgreSQL connection string and `Jwt__Key`.
 
 ---
 
 ## 🔎 API Discovery & Documentation
 
-Swagger UI is available for testing and exploring endpoints.
+When the full stack is running, you can access the service through the gateway:
 
-* **Swagger UI:** `http://localhost:8081/swagger`
-* **Service base URL:** `http://localhost:8081`
+* **Gateway Base URL:** `http://localhost:8080`
+* **Auth Service via Gateway:** `http://localhost:8080/auth`
+* **Auth Swagger via Gateway:** `http://localhost:8080/auth/swagger`
+
+When the service is run directly in development:
+
+* **Swagger UI:** `http://localhost:5163/swagger`
+* **Service base URL:** `http://localhost:5163`
 
 Swagger includes Bearer authentication support, so you can authorize requests directly from the UI.
-
-> [!TIP]
-> Swagger is enabled by default in `Development` environment. If you change `ASPNETCORE_ENVIRONMENT` to `Production`, Swagger UI might be disabled depending on your service configuration.
 
 ---
 
 ## 🧪 Development (per-service)
 
-If you want to develop the Auth Service locally (recommended):
+If you want to develop this service locally:
 
-1. Open the service folder.
-2. If you have the .NET SDK installed you can run the service directly:
+1. Open the `auth-service/` folder.
+2. Run the app with the .NET SDK:
 
 ```bash
-cd auth-service
-# restore & run
 dotnet restore
 dotnet run --launch-profile Development
 ```
 
-3. Or build and run the service container with Docker:
+3. Or build the service container with Docker:
 
 ```bash
 docker build -t auth-service:dev .
-# run with appropriate env vars pointing to your PostgreSQL instance
 ```
 
 > [!TIP]
-> When running the container manually, make sure it can access the database container by joining the same Docker network.
-> For example:
-> ```bash
-> docker run --network food-delivery-microservices_backend ...
-> ```
+> If you run the service container manually, make sure it can reach the PostgreSQL instance you configure in `ConnectionStrings__DefaultConnection`.
 
 ---
 
 ## 🧩 Tips & Troubleshooting
 
-* If the service starts but healthcheck fails, verify the database is reachable and the connection string is correct.
+* If the service starts but healthchecks fail, verify that PostgreSQL is reachable and that `ConnectionStrings:DefaultConnection` is correct.
 * Inspect logs with:
 
 ```bash
+docker compose logs -f auth-service
+# or, if you started the container manually
 docker logs -f auth-service
 ```
 
-* If you change environment variables, rebuild and recreate the container:
+* If you change environment variables in the full stack, recreate the containers:
 
 ```bash
-docker build -t auth-service:latest .
-docker run --rm --name auth-service -p 8081:80 ...
+docker compose down -v
+docker compose up -d --build
 ```
 
-* If Swagger is not visible, check whether the app is running in `Development` mode.
+* Database data is persisted when you run the full stack through the named volume defined in the root `docker-compose.yml`.
 
 ---
 
 ## 🛠️ What you can extend
 
-* Add role-based authorization and admin-only endpoints
-* Add email verification / password reset flows
-* Add OAuth2 / OpenID Connect login providers
-* Add refresh-token rotation and session management UI
-* Add integration tests for auth flows and token validation
+* Add role-based authorization / RBAC
+* Add email verification and password reset flows
+* Add integration tests around login and refresh token rotation
 
 ---
 
 ## 📄 License
 
-This project is released under the MIT License. See `LICENSE` for details
+This project is released under the MIT License. See `LICENSE` for details.
