@@ -215,17 +215,6 @@ docker build -t auth-service:dev .
 > docker run --network food-delivery-microservices_default ...
 > ```
 
-# If you have the .NET SDK installed, run the service directly:
-
-# restore & run
-dotnet restore
-dotnet run --launch-profile Development
-
-Or build and run the service container with Docker:
-
-docker build -t auth-service:dev .
-# run with appropriate env vars pointing to your PostgreSQL instance
-
 ---
 
 ## 🧩 Tips & Troubleshooting
