@@ -93,8 +93,20 @@ cd auth-service
 # 3. Build the Docker image
 docker build -t auth-service:latest .
 
-# 4. Run the container
-docker run --rm -p 8081:8080 auth-service:latest
+# 4. Start PostgreSQL first, then run the container with required settings
+docker run -d --name auth-postgres \
+  -e POSTGRES_DB=auth_db \
+  -e POSTGRES_USER=auth_user \
+  -e POSTGRES_PASSWORD=SuperStrongPass123! \
+  -p 5433:5432 \
+  postgres:18-alpine
+
+docker run --rm --name auth-service \
+  -p 8081:80 \
+  -e ASPNETCORE_ENVIRONMENT=Development \
+  -e ConnectionStrings__DefaultConnection='Host=host.docker.internal;Port=5433;Database=auth_db;Username=auth_user;Password=SuperStrongPass123!' \
+  -e Jwt__Key='your-super-secret-jwt-key-at-least-32-chars!!!' \
+  auth-service:latest
 ```
 
 > [!IMPORTANT]
@@ -157,7 +169,7 @@ If you want to run only this service locally:
 **Using .NET SDK**
 
 ```bash
-# from the repository root
+# from the service folder
 dotnet restore
 dotnet run
 ```
@@ -166,7 +178,12 @@ dotnet run
 
 ```bash
 docker build -t auth-service:dev .
-docker run --rm -p 8081:8080 auth-service:dev
+docker run --rm --name auth-service \
+  -p 8081:80 \
+  -e ASPNETCORE_ENVIRONMENT=Development \
+  -e ConnectionStrings__DefaultConnection='Host=host.docker.internal;Port=5433;Database=auth_db;Username=auth_user;Password=SuperStrongPass123!' \
+  -e Jwt__Key='your-super-secret-jwt-key-at-least-32-chars!!!' \
+  auth-service:dev
 ```
 
 If you are connecting to a PostgreSQL container, make sure both containers are on the same Docker network.
@@ -212,7 +229,7 @@ docker build -t auth-service:dev .
 > When running the container manually, make sure it can access the database container by joining the same Docker network.
 > For example:
 > ```bash
-> docker run --network food-delivery-microservices_default ...
+> docker run --network food-delivery-microservices_backend ...
 > ```
 
 ---
@@ -230,7 +247,7 @@ docker logs -f auth-service
 
 ```bash
 docker build -t auth-service:latest .
-docker run --rm -p 8081:8080 auth-service:latest
+docker run --rm --name auth-service -p 8081:80 ...
 ```
 
 * If Swagger is not visible, check whether the app is running in `Development` mode.
